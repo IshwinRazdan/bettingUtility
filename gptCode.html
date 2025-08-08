@@ -1,0 +1,621 @@
+"use client";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { initializeApp } from "firebase/app";
+import { getFirestore, doc, onSnapshot, setDoc, updateDoc, serverTimestamp, getDoc } from "firebase/firestore";
+
+/* ================== Firebase (optional for collaboration) ================== */
+const FIREBASE_CONFIG = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID",
+};
+
+/* ================== Constants ================== */
+const DEFAULT_LEFT = "Ishwin";
+const DEFAULT_RIGHT = "Varun";
+const START_POINTS = 100;
+const POSITIONS = ["GK","LB","CB","CB","RB","CM","CM","CM","LW","RW","ST","SUB1","SUB2","SUB3","SUB4"];
+
+/* ================== Styles ================== */
+const STYLE = `
+:root {--bg:#0b0f14;--grad1:#122033;--card:#101722;--text:#e6edf5;--muted:#a3b1c2;--line:#1f2a3a;--danger:#ef4444}
+*{box-sizing:border-box}body{margin:0}
+.wrap{min-height:100vh;background:radial-gradient(1200px 800px at 70% -10%, var(--grad1) 0%, var(--bg) 45%), var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial,sans-serif;padding:28px 20px 48px;display:grid;place-items:start center}
+.container{width:100%;max-width:980px;display:grid;gap:16px}
+.header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.header-left{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.title{font-size:22px;font-weight:650;letter-spacing:.2px}
+.subtitle{color:var(--muted);font-size:13px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 30px rgba(0,0,0,.35)}
+.card-h{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}
+.card-b{padding:14px 16px}
+.table{width:100%;border-collapse:collapse;min-width:560px}
+.table th,.table td{padding:10px 12px;border-bottom:1px solid var(--line)}
+.table thead th{text-align:left;font-weight:600;color:var(--muted)}
+.table tbody tr:last-child td{border-bottom:none}
+.table tbody tr:hover{background:rgba(255,255,255,.02)}
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.input{width:100%;max-width:180px;padding:8px 10px;border-radius:10px;border:1px solid var(--line);background:#0d1420;color:#e6edf5;outline:none}
+.input.s{max-width:72px;text-align:center}
+.input.sm{max-width:140px}
+.input:focus{border-color:#385f8c;box-shadow:0 0 0 3px rgba(77,163,255,.15)}
+.btns{display:flex;gap:10px;flex-wrap:wrap}
+.btn{appearance:none;border:none;padding:10px 14px;border-radius:10px;cursor:pointer;font-weight:600}
+.btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}
+.btn-primary{background:linear-gradient(180deg,#5db2ff,#2e8fff);color:#fff}
+.btn-danger{background:var(--danger);color:#fff}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width: 900px){.cols{grid-template-columns:1fr}}
+.rem{font-weight:600}.zero{color:#ef9b9b}
+
+/* Overlays */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;z-index:50}
+.win{position:relative;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:24px 22px 18px;box-shadow:0 30px 100px rgba(0,0,0,.5);text-align:center;overflow:hidden}
+.win h2{margin:0 0 6px;font-size:20px;color:var(--muted)}
+.win .name{font-size:36px;font-weight:800;letter-spacing:.4px;margin-bottom:10px;animation:pop 600ms ease-out}
+.win .draw{font-weight:700}
+.win .actions{display:flex;gap:10px;justify-content:center;margin-top:10px}
+@keyframes pop{0%{transform:scale(.85);opacity:.3}60%{transform:scale(1.08);opacity:1}100%{transform:scale(1)}}
+.confetti{position:fixed;top:-12px;width:6px;height:14px;background:#fff;opacity:.95;animation:fall linear forwards;pointer-events:none;z-index:60}
+@keyframes fall{to{transform:translateY(110vh) rotate(360deg)}}
+
+/* Full list overlay */
+.panel{position:relative;background:var(--card);border:1px solid var(--line);border-radius:18px;box-shadow:0 30px 100px rgba(0,0,0,.5);width:min(92vw,980px);max-height:86vh;display:flex;flex-direction:column}
+.panel-h{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}
+.panel-b{padding:14px 16px;overflow:auto}
+
+/* Kickoff overlay */
+.kick{position:relative;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:26px 28px;box-shadow:0 30px 100px rgba(0,0,0,.5);text-align:center;overflow:hidden}
+.kick h2{margin:0;font-size:28px;font-weight:800;letter-spacing:.3px;animation:pop 600ms ease-out}
+.kick p{margin:8px 0 0;color:var(--muted)}
+
+/* Top utility bar */
+.util{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.util .note{color:var(--muted);font-size:12px}
+.util .copied{font-size:12px;color:#8dd694}
+
+/* Team name editor badge */
+.team{
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  background:rgba(255,255,255,.03); border:1px solid var(--line);
+  border-radius:10px; padding:8px 10px;
+}
+.team .vs{color:var(--muted); font-weight:700; letter-spacing:.5px}
+.team .name{max-width:160px}
+.input[type=number]::-webkit-inner-spin-button,
+.input[type=number]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.input[type=number] {
+  -moz-appearance: textfield;
+}
+/* Mobile */
+@media (max-width: 520px){
+  .header{flex-direction:column;align-items:stretch;gap:8px}
+  .btns{gap:8px}
+  .util .note{display:none} /* hide long URL on phones */
+  .input{padding:12px 14px;font-size:16px}
+  .input.s{max-width:84px}
+  .input.sm{max-width:160px}
+  .btn{padding:12px 14px;font-size:15px}
+  .team .name{max-width:130px}
+}
+`;
+
+/* ================== Utilities ================== */
+const onlyDigits = (s) => (s||"").replace(/[^0-9.]/g, "").replace(/^(\d*\.\d*).*$/, "$1");
+const uid = () => Math.random().toString(36).slice(2);
+const getHashParam = (key) => {
+  const h = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  return h.get(key);
+};
+const setHashParam = (key, value) => {
+  const h = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  if (value === null) h.delete(key); else h.set(key, value);
+  const s = h.toString();
+  window.location.hash = s ? `#${s}` : "";
+};
+const getShareLink = (roomId) => {
+  if (!roomId) return "";
+  const { origin, pathname } = window.location;
+  return `${origin}${pathname}#room=${roomId}`;
+};
+
+function computeOutcome(games){
+  let lw=0, rw=0;
+  for (let i=0;i<3;i++){
+    const g=games[i];
+    if(!g || g.left==="" || g.right==="") return "";
+    const l=+g.left, r=+g.right;
+    if(l>r) lw++; else if(r>l) rw++;
+  }
+  if(lw>rw) return "left";
+  if(rw>lw) return "right";
+  return "draw";
+}
+
+function useDebouncedStorage(key, value){
+  const t = useRef(null);
+  useEffect(()=>{
+    clearTimeout(t.current);
+    t.current = setTimeout(()=>{ try{ localStorage.setItem(key, JSON.stringify(value)); }catch(_){} }, 150);
+    return ()=> clearTimeout(t.current);
+  }, [key, value]);
+}
+
+/* ================== Dev tests (kept) ================== */
+(function(){
+  const mk=(a,b,c)=>[{left:a[0],right:a[1]},{left:b[0],right:b[1]},{left:c[0],right:c[1]}];
+  console.assert(computeOutcome(mk([1,0],[2,0],[0,3]))==='left','left 2-1');
+  console.assert(computeOutcome(mk([0,1],[2,2],[3,0]))==='draw','split ⇒ draw');
+  console.assert(computeOutcome(mk([0,1],[0,2],[5,7]))==='right','right 0-2');
+  console.assert(computeOutcome([{left:"",right:""},{left:"0",right:"0"},{left:"1",right:"0"}])==='','incomplete');
+  console.assert(computeOutcome(mk([1,1],[1,1],[1,1]))==='draw','all draw');
+  console.assert(computeOutcome(mk([3,0],[3,0],[0,5]))==='left','left 2 wins');
+  console.assert(computeOutcome(mk([5,0],[0,5],[1,1]))==='draw','split+draw');
+})();
+
+/* ================== Firebase init ================== */
+let app, db;
+try {
+  app = initializeApp(FIREBASE_CONFIG);
+  db = getFirestore(app);
+} catch (e) {
+  db = undefined;
+}
+
+/* ================== Component ================== */
+export default function MatchHub(){
+  // Room / share
+  const [roomIdInput, setRoomIdInput] = useState(()=>getHashParam("room")||"");
+  const [roomId, setRoomId] = useState(()=>getHashParam("room")||"");
+  const [copied, setCopied] = useState(false);
+  const applyingRemote = useRef(false);
+  const clientId = useRef(uid());
+
+  useEffect(()=>{
+    const onHash=()=>{
+      const r = getHashParam("room")||"";
+      setRoomId(r); setRoomIdInput(r); setCopied(false);
+    };
+    window.addEventListener("hashchange", onHash);
+    return ()=> window.removeEventListener("hashchange", onHash);
+  },[]);
+
+  // Team names
+  const [leftName, setLeftName]   = useState(()=>{ try{return JSON.parse(localStorage.getItem('fmt_left_name')||'null')||DEFAULT_LEFT;}catch(e){return DEFAULT_LEFT;} });
+  const [rightName, setRightName] = useState(()=>{ try{return JSON.parse(localStorage.getItem('fmt_right_name')||'null')||DEFAULT_RIGHT;}catch(e){return DEFAULT_RIGHT;} });
+  useDebouncedStorage('fmt_left_name', leftName);
+  useDebouncedStorage('fmt_right_name', rightName);
+
+  // Lineup & budgets
+  const emptyArr = useMemo(()=> POSITIONS.map(()=>""), []);
+  const [spendLeft, setSpendLeft]   = useState(()=>{ try{return JSON.parse(localStorage.getItem("fmt_spend_left")||"null")||POSITIONS.map(()=>"\u0000").map(()=> "");}catch(e){return POSITIONS.map(()=> "");} });
+  const [spendRight, setSpendRight] = useState(()=>{ try{return JSON.parse(localStorage.getItem("fmt_spend_right")||"null")||POSITIONS.map(()=> "");}catch(e){return POSITIONS.map(()=> "");} });
+  const [chosenLeft, setChosenLeft] = useState(()=>{ try{return JSON.parse(localStorage.getItem("fmt_chosen_left")||"null")||POSITIONS.map(()=> "");}catch(e){return POSITIONS.map(()=> "");} });
+  const [chosenRight,setChosenRight]= useState(()=>{ try{return JSON.parse(localStorage.getItem("fmt_chosen_right")||"null")||POSITIONS.map(()=> "");}catch(e){return POSITIONS.map(()=> "");} });
+  useDebouncedStorage("fmt_spend_left", spendLeft);
+  useDebouncedStorage("fmt_spend_right", spendRight);
+  useDebouncedStorage("fmt_chosen_left", chosenLeft);
+  useDebouncedStorage("fmt_chosen_right", chosenRight);
+
+  const allNamesFilled = chosenLeft.every(v=>v && v.trim()) && chosenRight.every(v=>v && v.trim());
+  const [hasStarted, setHasStarted] = useState(false);
+  const [kickoff, setKickoff] = useState(false);
+
+  // Totals and clamping (no overspend)
+  let totalL=0,totalR=0; for(let i=0;i<POSITIONS.length;i++){ totalL+=spendLeft[i]?+spendLeft[i]:0; totalR+=spendRight[i]?+spendRight[i]:0; }
+  const remL = START_POINTS-totalL, remR = START_POINTS-totalR;
+
+  const clampLeft  = useCallback((idx,raw)=>{
+  const n=onlyDigits(raw);
+  const others=spendLeft.reduce((s,v,i)=> i===idx?s:s+(v?parseFloat(v):0),0);
+  const max=Math.max(0, START_POINTS-others);
+  const val=n===""?"":String(Math.min(parseFloat(n)||0,max));
+  setSpendLeft(a=>{const x=[...a]; x[idx]=val; return x;});
+},[spendLeft]);
+
+const clampRight = useCallback((idx,raw)=>{
+  const n=onlyDigits(raw);
+  const others=spendRight.reduce((s,v,i)=> i===idx?s:s+(v?parseFloat(v):0),0);
+  const max=Math.max(0, START_POINTS-others);
+  const val=n===""?"":String(Math.min(parseFloat(n)||0,max));
+  setSpendRight(a=>{const x=[...a]; x[idx]=val; return x;});
+},[spendRight]);
+
+  const setNameLeftRow  = (i,v)=> setChosenLeft(a=>{const x=[...a]; x[i]=v; return x;});
+  const setNameRightRow = (i,v)=> setChosenRight(a=>{const x=[...a]; x[i]=v; return x;});
+  const clearNames = ()=>{ setChosenLeft([...emptyArr]); setChosenRight([...emptyArr]); };
+  const resetBudget = ()=>{ const e=POSITIONS.map(()=> ""); setSpendLeft(e); setSpendRight(e); };
+
+  // Best of 3
+  const [games,setGames]=useState([{left:"",right:""},{left:"",right:""},{left:"",right:""}]);
+  const [series,setSeries]=useState(()=>{ try{return JSON.parse(localStorage.getItem("fmt_series")||"[]");}catch(_){return [];} });
+  useDebouncedStorage("fmt_series", series);
+
+  const allScoresFilled = games.every(g=>g.left!=="" && g.right!=="");
+  const updateGame=(i,side,val)=> setGames(g=>{const x=[...g]; x[i]={...x[i],[side]:onlyDigits(val)}; return x;});
+  const clearGames=()=> setGames([{left:"",right:""},{left:"",right:""},{left:"",right:""}]);
+
+  // Winner overlay / log
+  const [finale,setFinale]=useState(null); // { outcome, label }
+  const [showTopStart,setShowTopStart]=useState(false);
+  const [showAll,setShowAll]=useState(false);
+
+  useEffect(()=>{
+    if(!allScoresFilled) return;
+    const oc=computeOutcome(games);
+    const label = oc==='left' ? leftName : oc==='right' ? rightName : 'Draw';
+    setSeries(s=>[{id:uid(),date:new Date().toLocaleDateString(),games:[...games],outcome:oc,label},...s].slice(0,100));
+    setFinale({ outcome: oc, label });
+  },[allScoresFilled,games,leftName,rightName]);
+
+  // Summary
+  let leftWins=0,rightWins=0,draws=0;
+  for(let i=0;i<series.length;i++){
+    const oc=series[i].outcome;
+    if(oc==='left') leftWins++;
+    else if(oc==='right') rightWins++;
+    else if(oc==='draw') draws++;
+  }
+
+  // Firestore sync (optional)
+  const stateToShare = useMemo(()=>({
+    leftName,rightName,spendLeft,spendRight,chosenLeft,chosenRight,games,series,hasStarted
+  }), [leftName,rightName,spendLeft,spendRight,chosenLeft,chosenRight,games,series,hasStarted]);
+
+  useEffect(()=>{
+    if(!db || !roomId) return;
+    const ref = doc(db, 'rooms', roomId);
+    let unsub;
+    (async()=>{
+      const snap = await getDoc(ref);
+      if(!snap.exists()){
+        await setDoc(ref, { ...stateToShare, _createdAt: serverTimestamp(), _by: clientId.current });
+      }
+      unsub = onSnapshot(ref, (docSnap)=>{
+        const data = docSnap.data(); if(!data) return;
+        applyingRemote.current = true;
+        try{
+          setLeftName(data.leftName ?? DEFAULT_LEFT);
+          setRightName(data.rightName ?? DEFAULT_RIGHT);
+          setSpendLeft(Array.isArray(data.spendLeft)? data.spendLeft : POSITIONS.map(()=> ""));
+          setSpendRight(Array.isArray(data.spendRight)? data.spendRight : POSITIONS.map(()=> ""));
+          setChosenLeft(Array.isArray(data.chosenLeft)? data.chosenLeft : POSITIONS.map(()=> ""));
+          setChosenRight(Array.isArray(data.chosenRight)? data.chosenRight : POSITIONS.map(()=> ""));
+          setGames(Array.isArray(data.games)? data.games.slice(0,3) : [{left:"",right:""},{left:"",right:""},{left:"",right:""}]);
+          setSeries(Array.isArray(data.series)? data.series.slice(0,100) : []);
+          setHasStarted(!!data.hasStarted);
+        } finally {
+          setTimeout(()=>{ applyingRemote.current = false; }, 0);
+        }
+      });
+    })();
+    return ()=>{ if(unsub) unsub(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [db, roomId]);
+
+  useEffect(()=>{
+    if(!db || !roomId) return;
+    if(applyingRemote.current) return;
+    const t = setTimeout(async ()=>{
+      try{
+        const ref = doc(db, 'rooms', roomId);
+        await updateDoc(ref, { ...stateToShare, _updatedAt: serverTimestamp(), _by: clientId.current });
+      }catch(_){}
+    }, 250);
+    return ()=> clearTimeout(t);
+  }, [db, roomId, stateToShare]);
+
+  // Share / room actions
+  const createRoom = ()=> setHashParam('room', `room-${uid().slice(0,6)}`);
+  const joinRoom   = ()=> { if(!roomIdInput) return; setHashParam('room', roomIdInput.trim()); };
+  const copyShareLink = async ()=>{
+    if(!roomId) return;
+    const link = getShareLink(roomId);
+    try{ await navigator.clipboard.writeText(link); setCopied(true); setTimeout(()=>setCopied(false),1200); }
+    catch(_){
+      const t=document.createElement('textarea'); t.value=link; document.body.appendChild(t); t.select();
+      document.execCommand('copy'); document.body.removeChild(t); setCopied(true); setTimeout(()=>setCopied(false),1200);
+    }
+  };
+
+  // NEW: simple prompt-based team-name change (one-click)
+  const changeTeamNames = useCallback(()=>{
+    const l = prompt("Left team name:", leftName);
+    const r = prompt("Right team name:", rightName);
+    if (l !== null) setLeftName(l.trim() || leftName);
+    if (r !== null) setRightName(r.trim() || rightName);
+  }, [leftName, rightName]);
+
+  // Sections
+  const Lineup = (
+    <div className="card" key="lineup">
+      <div className="card-h">
+        <div>Lineup & Budget</div>
+        <div className="btns">
+          <button className="btn btn-ghost" onClick={resetBudget}>Reset Budget</button>
+          <button className="btn btn-ghost" onClick={clearNames}>Clear Names</button>
+        </div>
+      </div>
+      <div className="card-b">
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>{leftName} Spend</th>
+                <th>{rightName} Spend</th>
+                <th>Positions</th>
+                <th>{leftName} Player</th>
+                <th>{rightName} Player</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Remaining: <span className={`rem ${remL===0?'zero':''}`}>{remL}</span></td>
+                <td>Remaining: <span className={`rem ${remR===0?'zero':''}`}>{remR}</span></td>
+                <td></td><td></td><td></td>
+              </tr>
+              {POSITIONS.map((pos, idx) => (
+                <tr key={pos+idx}>
+<td>
+  <input
+    className="input s"
+    type="number" // <-- add this
+    inputMode="decimal"
+    step="0.01"
+    value={spendLeft[idx]}
+    onChange={e=>clampLeft(idx, e.target.value)}
+  />
+</td>
+<td>
+  <input
+    className="input s"
+    type="number" // <-- add this
+    inputMode="decimal"
+    step="0.01"
+    value={spendRight[idx]}
+    onChange={e=>clampRight(idx, e.target.value)}
+  />
+</td>
+{/* <td><input className="input s" inputMode="decimal" step="0.01" value={spendLeft[idx]} onChange={e=>clampLeft(idx, e.target.value)} /></td>
+<td><input className="input s" inputMode="decimal" step="0.01" value={spendRight[idx]} onChange={e=>clampRight(idx, e.target.value)} /></td>                  <td>{pos}</td> */}
+                  <td><input className="input" value={chosenLeft[idx]} onChange={e=>setNameLeftRow(idx, e.target.value)} /></td>
+                  <td><input className="input" value={chosenRight[idx]} onChange={e=>setNameRightRow(idx, e.target.value)} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="btns" style={{justifyContent:'flex-end', marginTop:12}}>
+          <button
+            className="btn btn-primary"
+            onClick={()=>{ if(!allNamesFilled) return; setHasStarted(true); setKickoff(true); setTimeout(()=>setKickoff(false),2000); }}
+            disabled={!allNamesFilled || hasStarted}
+          >Start Match</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const SeriesBlock = (
+    <div className="card" key="series">
+      <div className="card-h">
+        <div>Best-of-3 Series</div>
+        <div className="btns"><button className="btn btn-ghost" onClick={clearGames}>Clear Scores</button></div>
+      </div>
+      <div className="card-b">
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr><th>Game</th><th>{leftName} Score</th><th>{rightName} Score</th></tr>
+            </thead>
+            <tbody>
+              {games.map((g, i) => (
+                <tr key={i}>
+                  <td>Game {i + 1}</td>
+                  <td><input className="input s" inputMode="numeric" value={g.left} onChange={e=>updateGame(i,'left',e.target.value)} /></td>
+                  <td><input className="input s" inputMode="numeric" value={g.right} onChange={e=>updateGame(i,'right',e.target.value)} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="subtitle" style={{marginTop:8}}>Auto-saves when all 3 scores are entered.</div>
+      </div>
+    </div>
+  );
+
+  const SummaryAndLog = (
+    <div className="cols" key="summarylog">
+      <div className="card">
+        <div className="card-h"><div>Summary</div></div>
+        <div className="card-b">
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr><th></th><th>Wins</th><th>Draws</th><th>Losses</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><b>{leftName}</b></td><td>{leftWins}</td><td>{draws}</td><td>{rightWins}</td></tr>
+                <tr><td><b>{rightName}</b></td><td>{rightWins}</td><td>{draws}</td><td>{leftWins}</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-h"><div>Series Log</div></div>
+        <div className="card-b">
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr><th>Date</th><th>Games (L–R)</th><th>Outcome</th><th>Actions</th></tr>
+              </thead>
+              <tbody>
+                {series.length===0? (
+                  <tr><td colSpan={4} style={{ textAlign:"center", color:"#8aa0b8" }}>No series yet.</td></tr>
+                ) : (
+                  <tr key={series[0].id}>
+                    <td>{series[0].date}</td>
+                    <td>{series[0].games.map(g => `${g.left || 0}-${g.right || 0}`).join(" , ")}</td>
+                    <td>{series[0].outcome==='left'? leftName : series[0].outcome==='right'? rightName : 'Draw'}</td>
+                    <td><button className="btn btn-danger" onClick={()=>setSeries(s=>s.filter(x=>x.id!==series[0].id))}>Delete</button></td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="btns" style={{justifyContent:'flex-end', marginTop:10}}>
+            {series.length>1 && (
+              <button className="btn btn-ghost" onClick={()=>setShowAll(true)}>View all matches</button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  // Layout order
+  const sections = hasStarted ? [SeriesBlock, SummaryAndLog, Lineup] : [Lineup, SeriesBlock, SummaryAndLog];
+
+  // Confetti (winner only)
+  const confetti = useMemo(()=>{
+    if(!finale || finale.outcome==='draw') return [];
+    return new Array(120).fill(0).map((_,i)=>({
+      left: Math.random()*100,
+      dur: 1800 + Math.random()*1600,
+      delay: Math.random()*400,
+      scale: 0.8 + Math.random()*1.2
+    }));
+  }, [finale]);
+
+  const startNewTournament=()=>{ clearNames(); clearGames(); setFinale(null); setShowTopStart(false); setHasStarted(false); window.scrollTo({top:0,behavior:'smooth'}); };
+  const closeOverlay=()=>{ setFinale(null); setShowTopStart(true); };
+
+  return (
+    <div className="wrap">
+      <style>{STYLE}</style>
+      <div className="container">
+        <div className="header">
+          <div className="header-left">
+            <div className="title">Match Hub</div>
+
+            {/* Inline quick editor */}
+            <div className="team" aria-label="Edit team names">
+              <input className="input sm name" value={leftName} onChange={e=>setLeftName(e.target.value)} placeholder="Left team" />
+              <span className="vs">vs</span>
+              <input className="input sm name" value={rightName} onChange={e=>setRightName(e.target.value)} placeholder="Right team" />
+            </div>
+
+            {/* One-click prompt editor */}
+            <button className="btn btn-ghost" onClick={changeTeamNames}>Change Team Names</button>
+
+            {showTopStart && (
+              <button className="btn btn-primary" onClick={startNewTournament}>Start New Tournament</button>
+            )}
+          </div>
+
+          <div className="btns util">
+            {db ? (
+              <>
+                <input className="input sm" placeholder="room-id" value={roomIdInput} onChange={e=>setRoomIdInput(e.target.value)} />
+                <button className="btn btn-ghost" onClick={joinRoom}>Join</button>
+                <button className="btn btn-primary" onClick={createRoom}>Create</button>
+                {roomId && (
+                  <>
+                    <span className="note">Share: <code style={{opacity:.9}}>{getShareLink(roomId)}</code></span>
+                    <button className="btn btn-ghost" onClick={copyShareLink}>Copy Link</button>
+                    {copied && <span className="copied">Copied!</span>}
+                  </>
+                )}
+              </>
+            ) : (
+              <span className="note">Collaboration: add your Firebase config to enable real-time edits.</span>
+            )}
+          </div>
+        </div>
+
+        {sections}
+      </div>
+
+      {/* Kickoff overlay – auto hides after 2s */}
+      {kickoff && (
+        <div className="overlay" role="dialog" aria-modal>
+          <div className="kick">
+            <h2>Let the games begin</h2>
+            <p>Good luck to both sides!</p>
+          </div>
+        </div>
+      )}
+
+      {/* Winner overlay with full-screen confetti (not on draw) */}
+      {finale && (
+        <div className="overlay" role="dialog" aria-modal>
+          {confetti.map((c,i)=> (
+            <span key={i} className="confetti" style={{
+              left: c.left+"vw",
+              transform: `scale(${c.scale})`,
+              background: i%3===0?"#7dd3fc": i%3===1?"#fca5a5":"#fde68a",
+              animationDuration: c.dur+"ms",
+              animationDelay: c.delay+"ms"
+            }} />
+          ))}
+          <div className="win">
+            <h2>Series Winner</h2>
+            {finale.outcome === 'draw' ? (
+              <div className="name draw">Draw</div>
+            ) : (
+              <div className="name">{finale.label}</div>
+            )}
+            <div className="actions">
+              <button className="btn btn-primary" onClick={startNewTournament}>Start New Tournament</button>
+              <button className="btn btn-ghost" onClick={closeOverlay}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* All matches overlay */}
+      {showAll && (
+        <div className="overlay" role="dialog" aria-modal>
+          <div className="panel">
+            <div className="panel-h">
+              <div style={{fontWeight:700}}>All Matches</div>
+              <div className="btns">
+                <button className="btn btn-ghost" onClick={()=>setShowAll(false)}>Close</button>
+              </div>
+            </div>
+            <div className="panel-b">
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr><th>#</th><th>Date</th><th>Games (L–R)</th><th>Outcome</th><th>Actions</th></tr>
+                  </thead>
+                  <tbody>
+                    {series.length===0? (
+                      <tr><td colSpan={5} style={{ textAlign:"center", color:"#8aa0b8" }}>No matches yet.</td></tr>
+                    ) : series.map((row, idx) => (
+                      <tr key={row.id}>
+                        <td>{series.length - idx}</td>
+                        <td>{row.date}</td>
+                        <td>{row.games.map(g => `${g.left || 0}-${g.right || 0}`).join(" , ")}</td>
+                        <td>{row.outcome==='left'? leftName : row.outcome==='right'? rightName : 'Draw'}</td>
+                        <td><button className="btn btn-danger" onClick={()=>setSeries(s=>s.filter(x=>x.id!==row.id))}>Delete</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
